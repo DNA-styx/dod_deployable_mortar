@@ -40,6 +40,7 @@
   - Fire Mortar
   - Adjust Range (+/-)
   - Rotate Left/Right
+- Green smoke appears briefly where the mortar shell will land.
 - Fire the mortar by punching/shooting it, or from the menu.
 - Mortars can be destroyed by other players.
 
