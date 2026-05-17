@@ -1,0 +1,43 @@
+name: FastDL Release Asset
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  fastdl_package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Install bzip2
+        run: sudo apt-get update && sudo apt-get install -y bzip2
+
+      - name: Clean Build Directory
+        run: rm -rf fastdl-build && mkdir -p fastdl-build
+
+      - name: Bzip2 models and materials recursively
+        run: |
+          # Copy folder structure and bz2 the files.
+          for dir in models materials; do
+            if [ -d "$dir" ]; then
+              find "$dir" -type f | while read file; do
+                dest="fastdl-build/$file.bz2"
+                mkdir -p "$(dirname "$dest")"
+                bzip2 -c "$file" > "$dest"
+              done
+            fi
+          done
+
+      - name: Archive bz2 files
+        run: |
+          cd fastdl-build
+          zip -r "../FastDL-Files-${{ github.event.release.tag_name }}.zip" *
+
+      - name: Upload zip to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: FastDL-Files-${{ github.event.release.tag_name }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
