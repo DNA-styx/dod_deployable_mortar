@@ -3,6 +3,11 @@
 
 <img width="1920" height="1080" alt="20D14F~1" src="https://github.com/user-attachments/assets/4696790e-9c84-4416-90c6-53fed237c169" />
 <img width="1920" height="1080" alt="206969~1" src="https://github.com/user-attachments/assets/bed3e2fe-d5dd-47b3-b917-80be7aa04d93" />
+<img width="1920" height="1080" alt="20E960~1" src="https://github.com/user-attachments/assets/752ae310-f139-427b-b7ff-5570a5994bd6" />
+<img width="1920" height="1080" alt="206622~1" src="https://github.com/user-attachments/assets/27e7819d-c32b-4998-945d-50228d5b60c9" />
+<img width="1920" height="1080" alt="20E899~1" src="https://github.com/user-attachments/assets/c3591ff2-7fe3-4f1e-aaf9-ab72dea7dfbb" />
+
+
 
 ## Overview
 
@@ -56,12 +61,4 @@
 ---
 
 > [GitHub Repository](https://github.com/DNA-styx/dod_deployable_mortar)
-=======
-# dod_deployable_mortar
 
-
-<img width="1920" height="1080" alt="20D14F~1" src="https://github.com/user-attachments/assets/4696790e-9c84-4416-90c6-53fed237c169" />
-
-<img width="1920" height="1080" alt="206969~1" src="https://github.com/user-attachments/assets/bed3e2fe-d5dd-47b3-b917-80be7aa04d93" />
-
->>>>>>> 412ff7a207cbe42d40c66a9e89aa67125f4268cf
