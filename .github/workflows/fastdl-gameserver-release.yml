@@ -11,8 +11,17 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Install bzip2
-        run: sudo apt-get update && sudo apt-get install -y bzip2
+      - name: Install bzip2 and zip utilities
+        run: sudo apt-get update && sudo apt-get install -y bzip2 zip
+
+      - name: Check required directories exist
+        run: |
+          for dir in addons materials models; do
+            if [ ! -d "$dir" ]; then
+              echo "Required directory '$dir' does not exist!"
+              exit 1
+            fi
+          done
 
       - name: Clean Build Directory
         run: rm -rf fastdl-build && mkdir -p fastdl-build
@@ -35,9 +44,21 @@ jobs:
           cd fastdl-build
           zip -r "../FastDL-Files-${{ github.event.release.tag_name }}.zip" *
 
-      - name: Upload zip to release
+      # --- New step: Archive all GameServer files ---
+      - name: Create GameServer-Files zip (addons, materials, models)
+        run: |
+          zip -r "GameServer-Files-${{ github.event.release.tag_name }}.zip" addons materials models
+
+      - name: Upload FastDL zip to release
         uses: softprops/action-gh-release@v2
         with:
           files: FastDL-Files-${{ github.event.release.tag_name }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload GameServer-Files zip to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: GameServer-Files-${{ github.event.release.tag_name }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
