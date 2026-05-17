@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # DoD Deployable Mortar
 
 <img width="1920" height="1080" alt="20D14F~1" src="https://github.com/user-attachments/assets/4696790e-9c84-4416-90c6-53fed237c169" />
@@ -6,6 +5,7 @@
 <img width="1920" height="1080" alt="20E960~1" src="https://github.com/user-attachments/assets/752ae310-f139-427b-b7ff-5570a5994bd6" />
 <img width="1920" height="1080" alt="206622~1" src="https://github.com/user-attachments/assets/27e7819d-c32b-4998-945d-50228d5b60c9" />
 <img width="1920" height="1080" alt="20E899~1" src="https://github.com/user-attachments/assets/c3591ff2-7fe3-4f1e-aaf9-ab72dea7dfbb" />
+<img width="775" height="711" alt="image" src="https://github.com/user-attachments/assets/54ea4685-73ad-4b4e-954f-e172ece6c317" />
 
 
 
