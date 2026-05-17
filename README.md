@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # DoD Deployable Mortar
 
 <img width="1920" height="1080" alt="20D14F~1" src="https://github.com/user-attachments/assets/4696790e-9c84-4416-90c6-53fed237c169" />
@@ -55,3 +56,12 @@
 ---
 
 > [GitHub Repository](https://github.com/DNA-styx/dod_deployable_mortar)
+=======
+# dod_deployable_mortar
+
+
+<img width="1920" height="1080" alt="20D14F~1" src="https://github.com/user-attachments/assets/4696790e-9c84-4416-90c6-53fed237c169" />
+
+<img width="1920" height="1080" alt="206969~1" src="https://github.com/user-attachments/assets/bed3e2fe-d5dd-47b3-b917-80be7aa04d93" />
+
+>>>>>>> 412ff7a207cbe42d40c66a9e89aa67125f4268cf
