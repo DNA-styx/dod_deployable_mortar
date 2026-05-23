@@ -5,7 +5,7 @@
 #pragma semicolon 1
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.8.08"
+#define PLUGIN_VERSION "0.8.27"
 
 // Model path
 #define MORTAR_MODEL "models/surgeon/mortar34.mdl"
@@ -69,28 +69,49 @@ float g_LastExplosionPos[MAX_MORTARS][3];
 Handle g_SteamTimer[MAX_MORTARS];
 Handle g_ReloadTimer[MAX_MORTARS];
 Handle g_ExplosionTimer[MAX_MORTARS];
+
+ConVar g_CvarWelcome;
 int g_SteamEntity[MAX_MORTARS];
 
 public Plugin myinfo =
 {
     name = "DoD Deployable Mortar",
-    author = "DNA.styx",
-    description = "Allows players to deploy and use portable mortars",
+    author = "Claude.ai guided by DNA.styx",
+    description = "Allows players to deploy and use mortars",
     version = PLUGIN_VERSION,
-    url = ""
+    url = "https://github.com/DNA-styx/dod_deployable_mortar"
 };
 
 public void OnPluginStart()
 {
-    RegConsoleCmd("sm_mortar", Command_SpawnMortar, "Spawn a mortar in front of you");
+    CreateConVar("dod_deployable_mortar_version", PLUGIN_VERSION, "DoD Deployable Mortar Version", FCVAR_NOTIFY|FCVAR_DONTRECORD);
+    g_CvarWelcome = CreateConVar("dod_deployable_mortar_welcome", "1", "Show welcome message to players on connect (0=off, 1=on)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+    
+    AutoExecConfig(true, "dod_deployable_mortar");
+    RegConsoleCmd("sm_mortar", Command_SpawnMortar, "Deploy a mortar");
+    AddCommandListener(Listener_Say, "say");
+    AddCommandListener(Listener_Say, "say_team");
     HookEvent("player_death", OnPlayerDeath, EventHookMode_Post);
     HookEvent("dod_round_start", OnRoundStart, EventHookMode_PostNoCopy);
+    HookEvent("player_team", OnPlayerTeam, EventHookMode_Post);
+    HookEvent("player_spawn", OnPlayerSpawn, EventHookMode_Post);
     PrintToServer("[DeployableMortar] Loaded - v%s", PLUGIN_VERSION);
 }
 
 public void OnPluginEnd()
 {
     RemoveAllMortars();
+}
+
+public Action Listener_Say(int client, const char[] command, int argc)
+{
+    char text[16];
+    GetCmdArg(1, text, sizeof(text));
+    
+    if (StrEqual(text, "!mortar", false) || StrEqual(text, "/mortar", false))
+        return Plugin_Handled;
+    
+    return Plugin_Continue;
 }
 
 public void OnClientDisconnect(int client)
@@ -105,28 +126,31 @@ public void OnClientDisconnect(int client)
     }
 }
 
+public void OnClientPutInServer(int client)
+{
+    if (!IsFakeClient(client))
+        CreateTimer(20.0, Timer_WelcomeMsg, client);
+}
+
+public Action Timer_WelcomeMsg(Handle timer, int client)
+{
+    if (g_CvarWelcome.IntValue == 0)
+        return Plugin_Stop;
+    
+    if (!IsValidClient(client, false, false))
+        return Plugin_Stop;
+    
+    PrintToChat(client, "\x01\x04[Mortar]\x01 Say \x04!mortar\x01 to place a deployable mortar");
+    return Plugin_Stop;
+}
+
 public Action OnPlayerDeath(Handle event, const char[] name, bool dontBroadcast)
 {
     int victim = GetClientOfUserId(GetEventInt(event, "userid"));
     int attacker = GetClientOfUserId(GetEventInt(event, "attacker"));
     
-    if (!IsValidClient(victim))
+    if (!IsValidClient(victim, false, true))
         return Plugin_Continue;
-    
-    // If victim owns a mortar, remove it and cancel their menu
-    for (int i = 0; i < g_MortarCount; i++)
-    {
-        if (g_MortarOwner[i] == victim)
-        {
-            int mortar = EntRefToEntIndex(g_SpawnedMortars[i]);
-            if (mortar != INVALID_ENT_REFERENCE && IsValidEntity(mortar))
-            {
-                CancelClientMenu(victim);
-                RemoveMortar(i);
-            }
-            break;
-        }
-    }
     
     // Only check world kills for kill credit (env_explosion has no attacker)
     if (attacker != 0)
@@ -176,9 +200,20 @@ public Action OnPlayerDeath(Handle event, const char[] name, bool dontBroadcast)
         
         PrintToChatAll("\x01\x04[Mortar]\x01 %s killed %s", ownerColored, victimColored);
         
-        LogToGame("\"%s<%d><%s>\" killed \"%s<%d><%s>\" with \"mortar_deployable\"",
-            ownerName, GetClientUserId(owner), GetClientTeam(owner) == TEAM_ALLIES ? "Allies" : "Axis",
-            victimName, GetClientUserId(victim), GetClientTeam(victim) == TEAM_ALLIES ? "Allies" : "Axis");
+        char ownerSteamId[32], victimSteamId[32];
+        if (IsFakeClient(owner))
+            strcopy(ownerSteamId, sizeof(ownerSteamId), "BOT");
+        else
+            GetClientAuthId(owner, AuthId_Steam2, ownerSteamId, sizeof(ownerSteamId));
+        
+        if (IsFakeClient(victim))
+            strcopy(victimSteamId, sizeof(victimSteamId), "BOT");
+        else
+            GetClientAuthId(victim, AuthId_Steam2, victimSteamId, sizeof(victimSteamId));
+        
+        LogToGame("\"%s<%d><%s><%s>\" killed \"%s<%d><%s><%s>\" with \"mortar_deployable\"",
+            ownerName, GetClientUserId(owner), ownerSteamId, GetClientTeam(owner) == TEAM_ALLIES ? "Allies" : "Axis",
+            victimName, GetClientUserId(victim), victimSteamId, GetClientTeam(victim) == TEAM_ALLIES ? "Allies" : "Axis");
         
         break;
     }
@@ -190,6 +225,52 @@ public Action OnRoundStart(Handle event, const char[] name, bool dontBroadcast)
 {
     CancelAllMenus();
     RemoveAllMortars();
+    return Plugin_Continue;
+}
+
+public Action OnPlayerTeam(Handle event, const char[] name, bool dontBroadcast)
+{
+    int client = GetClientOfUserId(GetEventInt(event, "userid"));
+    
+    if (!IsValidClient(client))
+        return Plugin_Continue;
+    
+    for (int i = 0; i < g_MortarCount; i++)
+    {
+        if (g_MortarOwner[i] == client)
+        {
+            int mortar = EntRefToEntIndex(g_SpawnedMortars[i]);
+            if (mortar != INVALID_ENT_REFERENCE && IsValidEntity(mortar))
+            {
+                CancelClientMenu(client);
+                RemoveMortar(i);
+            }
+            break;
+        }
+    }
+    
+    return Plugin_Continue;
+}
+
+public Action OnPlayerSpawn(Handle event, const char[] name, bool dontBroadcast)
+{
+    int client = GetClientOfUserId(GetEventInt(event, "userid"));
+    
+    if (!IsValidClient(client))
+        return Plugin_Continue;
+    
+    // Refresh menu if player owns a mortar so Fire becomes active again
+    for (int i = 0; i < g_MortarCount; i++)
+    {
+        if (g_MortarOwner[i] == client)
+        {
+            int mortar = EntRefToEntIndex(g_SpawnedMortars[i]);
+            if (mortar != INVALID_ENT_REFERENCE && IsValidEntity(mortar))
+                ShowMortarMenu(client, i, MENU_STATE_NORMAL);
+            break;
+        }
+    }
+    
     return Plugin_Continue;
 }
 
@@ -218,7 +299,29 @@ public void OnMapStart()
     PrecacheSound(SOUND_INCOMING, true);
     PrecacheSound(SOUND_DENY, true);
     
-    AddFileToDownloadsTable("sound/weapons/mortar_shoot.wav");
+    // Custom mortar models - register all companion files for client download
+    AddFileToDownloadsTable("models/surgeon/mortar34.mdl");
+    AddFileToDownloadsTable("models/surgeon/mortar34.vvd");
+    AddFileToDownloadsTable("models/surgeon/mortar34.dx90.vtx");
+    AddFileToDownloadsTable("models/surgeon/mortar34.phy");
+    AddFileToDownloadsTable("models/surgeon/mortar34_gib1.mdl");
+    AddFileToDownloadsTable("models/surgeon/mortar34_gib1.vvd");
+    AddFileToDownloadsTable("models/surgeon/mortar34_gib1.dx90.vtx");
+    AddFileToDownloadsTable("models/surgeon/mortar34_gib1.phy");
+    AddFileToDownloadsTable("models/surgeon/mortar34_gib2.mdl");
+    AddFileToDownloadsTable("models/surgeon/mortar34_gib2.vvd");
+    AddFileToDownloadsTable("models/surgeon/mortar34_gib2.dx90.vtx");
+    AddFileToDownloadsTable("models/surgeon/mortar34_gib2.phy");
+    AddFileToDownloadsTable("models/surgeon/mortar34_gib3.mdl");
+    AddFileToDownloadsTable("models/surgeon/mortar34_gib3.vvd");
+    AddFileToDownloadsTable("models/surgeon/mortar34_gib3.dx90.vtx");
+    AddFileToDownloadsTable("models/surgeon/mortar34_gib3.phy");
+    AddFileToDownloadsTable("materials/models/surgeon/mortar34.vmt");
+    AddFileToDownloadsTable("materials/models/surgeon/mortar34.vtf");
+    AddFileToDownloadsTable("materials/models/surgeon/mortarcase.vmt");
+    AddFileToDownloadsTable("materials/models/surgeon/mortarcase.vtf");
+    AddFileToDownloadsTable("materials/models/surgeon/mortarshell.vmt");
+    AddFileToDownloadsTable("materials/models/surgeon/mortarshell.vtf");
 }
 
 public Action Command_SpawnMortar(int client, int args)
@@ -251,19 +354,23 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
 {
     Menu menu = new Menu(MenuHandler_Mortar);
     
-    char title[256];
+    char title[512];
     
     if (state == MENU_STATE_UNDER_ROOF)
     {
-        Format(title, sizeof(title), "Deployable Mortar\n- Move outside to place");
+        Format(title, sizeof(title), "Deployable Mortar\n \n• Place in the open, not under cover\n• Move outside - roof detected\n ");
     }
     else if (state == MENU_STATE_ALREADY_OWN)
     {
-        Format(title, sizeof(title), "Deployable Mortar\n- Destroy to replace");
+        Format(title, sizeof(title), "Deployable Mortar\n \n• Remove your current mortar first\n ");
+    }
+    else if (mortarIndex < 0)
+    {
+        Format(title, sizeof(title), "Deployable Mortar\n \n• Place in the open, not under cover\n• Smoke shows where shell will land\n• Shoot or hit mortar to fire\n ");
     }
     else
     {
-        Format(title, sizeof(title), "Deployable Mortar");
+        Format(title, sizeof(title), "Deployable Mortar (Range: %d)", g_MortarRange[mortarIndex]);
     }
     
     menu.SetTitle(title);
@@ -285,14 +392,9 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
         Format(placermItem, sizeof(placermItem), "placerm_%s", indexStr);
         
         if (state == MENU_STATE_ALREADY_OWN)
-            menu.AddItem(placermItem, "Place Mortar (Own One)", ITEMDRAW_DISABLED);
+            menu.AddItem(placermItem, "Place Mortar", ITEMDRAW_DISABLED);
         else
             menu.AddItem(placermItem, "Place Mortar");
-        
-        menu.AddItem("", "", ITEMDRAW_IGNORE);
-        menu.AddItem("hint1", "Place in the open, not under cover", ITEMDRAW_RAWLINE);
-        menu.AddItem("hint2", "Smoke shows where shell will land", ITEMDRAW_RAWLINE);
-        menu.AddItem("hint3", "Shoot/hit mortar to fire", ITEMDRAW_RAWLINE);
     }
     else
     {
@@ -303,7 +405,10 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
         
         char fireItem[16];
         Format(fireItem, sizeof(fireItem), "fire_%s", indexStr);
-        menu.AddItem(fireItem, "Fire Mortar");
+        if (IsPlayerAlive(client))
+            menu.AddItem(fireItem, "Fire Mortar");
+        else
+            menu.AddItem(fireItem, "Fire Mortar", ITEMDRAW_DISABLED);
         
         menu.AddItem("", "", ITEMDRAW_IGNORE);
         
@@ -690,14 +795,36 @@ public Action OnHelperDamage(int victim, int &attacker, int &inflictor, float &d
     {
         float mortarPos[3];
         GetEntPropVector(mortarEntity, Prop_Send, "m_vecOrigin", mortarPos);
-        DestroyMortar(mortarIndex, mortarOwner, mortarPos);
+        DestroyMortar(mortarIndex, mortarOwner, attacker, mortarPos);
     }
     
     return Plugin_Handled;
 }
 
-void DestroyMortar(int mortarIndex, int owner, const float pos[3])
+void DestroyMortar(int mortarIndex, int owner, int destroyer, const float pos[3])
 {
+    // Log destruction for HLStatsX
+    if (IsValidClient(destroyer) && IsValidClient(owner))
+    {
+        char destroyerName[MAX_NAME_LENGTH], ownerName[MAX_NAME_LENGTH];
+        GetClientName(destroyer, destroyerName, sizeof(destroyerName));
+        GetClientName(owner, ownerName, sizeof(ownerName));
+        
+        char destroyerSteamId[32], ownerSteamId[32];
+        if (IsFakeClient(destroyer))
+            strcopy(destroyerSteamId, sizeof(destroyerSteamId), "BOT");
+        else
+            GetClientAuthId(destroyer, AuthId_Steam2, destroyerSteamId, sizeof(destroyerSteamId));
+        
+        if (IsFakeClient(owner))
+            strcopy(ownerSteamId, sizeof(ownerSteamId), "BOT");
+        else
+            GetClientAuthId(owner, AuthId_Steam2, ownerSteamId, sizeof(ownerSteamId));
+        
+        LogToGame("\"%s<%d><%s><%s>\" triggered \"mortar_deployable_destroyed\" against \"%s<%d><%s><%s>\"",
+            destroyerName, GetClientUserId(destroyer), destroyerSteamId, GetClientTeam(destroyer) == TEAM_ALLIES ? "Allies" : "Axis",
+            ownerName, GetClientUserId(owner), ownerSteamId, GetClientTeam(owner) == TEAM_ALLIES ? "Allies" : "Axis");
+    }
     // Spawn gibs - matching reference entity angles
     SpawnGib("models/surgeon/mortar34_gib1.mdl", pos, "-65 250 0");
     SpawnGib("models/surgeon/mortar34_gib2.mdl", pos, "0 250 0");
@@ -765,7 +892,7 @@ void UpdateTargetSprite(int mortarIndex)
     targetPos[2] = mortarPos[2];
     
     float groundPos[3];
-    if (!TraceToGround(targetPos, groundPos))
+    if (!FindGroundAt(targetPos, mortarPos, groundPos))
         return;
     
     int oldSprite = EntRefToEntIndex(g_MortarTargetSprite[mortarIndex]);
@@ -809,20 +936,22 @@ void FireMortarEffects(const float pos[3], const float mortarAngles[3], int mort
     explosionPos[2] = pos[2];
     
     float groundExplosionPos[3];
-    if (TraceToGround(explosionPos, groundExplosionPos))
-    {
-        g_LastExplosionPos[mortarIndex][0] = groundExplosionPos[0];
-        g_LastExplosionPos[mortarIndex][1] = groundExplosionPos[1];
-        g_LastExplosionPos[mortarIndex][2] = groundExplosionPos[2];
-        
-        EmitSoundToAll(SOUND_INCOMING, SOUND_FROM_WORLD, SNDCHAN_AUTO, SNDLEVEL_NORMAL, SND_NOFLAGS, 1.0, SNDPITCH_NORMAL, -1, groundExplosionPos);
-        
-        DataPack explosionPack = new DataPack();
-        explosionPack.WriteFloat(groundExplosionPos[0]);
-        explosionPack.WriteFloat(groundExplosionPos[1]);
-        explosionPack.WriteFloat(groundExplosionPos[2]);
-        g_ExplosionTimer[mortarIndex] = CreateTimer(2.0, Timer_CreateExplosion, explosionPack);
-    }
+    if (!FindGroundAt(explosionPos, pos, groundExplosionPos))
+        return;
+    
+    // Store for kill detection
+    g_LastExplosionPos[mortarIndex][0] = groundExplosionPos[0];
+    g_LastExplosionPos[mortarIndex][1] = groundExplosionPos[1];
+    g_LastExplosionPos[mortarIndex][2] = groundExplosionPos[2];
+    
+    EmitSoundToAll(SOUND_INCOMING, SOUND_FROM_WORLD, SNDCHAN_AUTO, SNDLEVEL_NORMAL, SND_NOFLAGS, 1.0, SNDPITCH_NORMAL, -1, groundExplosionPos);
+    
+    DataPack explosionPack = new DataPack();
+    explosionPack.WriteFloat(groundExplosionPos[0]);
+    explosionPack.WriteFloat(groundExplosionPos[1]);
+    explosionPack.WriteFloat(groundExplosionPos[2]);
+    explosionPack.WriteCell(mortarIndex);
+    g_ExplosionTimer[mortarIndex] = CreateTimer(2.0, Timer_CreateExplosion, explosionPack);
     
     DataPack soundPack = new DataPack();
     soundPack.WriteFloat(pos[0]);
@@ -836,6 +965,7 @@ void FireMortarEffects(const float pos[3], const float mortarAngles[3], int mort
     reloadPack.WriteFloat(pos[0]);
     reloadPack.WriteFloat(pos[1]);
     reloadPack.WriteFloat(pos[2]);
+    reloadPack.WriteCell(mortarIndex);
     g_ReloadTimer[mortarIndex] = CreateTimer(5.0, Timer_PlayReloadSound, reloadPack);
 }
 
@@ -873,7 +1003,11 @@ void CreateMortarSteam(const float pos[3], const float mortarAngles[3], int mort
     AcceptEntityInput(steam, "TurnOn");
     
     g_SteamEntity[mortarIndex] = EntIndexToEntRef(steam);
-    g_SteamTimer[mortarIndex] = CreateTimer(2.0, Timer_TurnOffSteam, EntIndexToEntRef(steam));
+    
+    DataPack steamPack = new DataPack();
+    steamPack.WriteCell(EntIndexToEntRef(steam));
+    steamPack.WriteCell(mortarIndex);
+    g_SteamTimer[mortarIndex] = CreateTimer(2.0, Timer_TurnOffSteam, steamPack);
 }
 
 // --- Timers ---
@@ -898,7 +1032,10 @@ public Action Timer_PlayReloadSound(Handle timer, DataPack pack)
     pos[0] = pack.ReadFloat();
     pos[1] = pack.ReadFloat();
     pos[2] = pack.ReadFloat();
+    int mortarIndex = pack.ReadCell();
     delete pack;
+    
+    g_ReloadTimer[mortarIndex] = INVALID_HANDLE;
     
     EmitSoundToAll(SOUND_RELOAD, SOUND_FROM_WORLD, SNDCHAN_AUTO, SNDLEVEL_NORMAL, SND_NOFLAGS, 1.0, SNDPITCH_NORMAL, -1, pos);
     return Plugin_Stop;
@@ -928,7 +1065,10 @@ public Action Timer_CreateExplosion(Handle timer, DataPack pack)
     pos[0] = pack.ReadFloat();
     pos[1] = pack.ReadFloat();
     pos[2] = pack.ReadFloat();
+    int mortarIndex = pack.ReadCell();
     delete pack;
+    
+    g_ExplosionTimer[mortarIndex] = INVALID_HANDLE;
     
     int explosion = CreateEntityByName("env_explosion");
     if (explosion != -1)
@@ -961,8 +1101,15 @@ public Action Timer_CreateShakeOnly(Handle timer, DataPack pack)
     return Plugin_Stop;
 }
 
-public Action Timer_TurnOffSteam(Handle timer, int entRef)
+public Action Timer_TurnOffSteam(Handle timer, DataPack pack)
 {
+    pack.Reset();
+    int entRef = pack.ReadCell();
+    int mortarIndex = pack.ReadCell();
+    delete pack;
+    
+    g_SteamTimer[mortarIndex] = INVALID_HANDLE;
+    
     int entity = EntRefToEntIndex(entRef);
     if (entity != INVALID_ENT_REFERENCE && IsValidEntity(entity))
     {
@@ -1036,6 +1183,44 @@ bool TraceToGround(const float start[3], float result[3])
     return false;
 }
 
+// Two-stage trace: first trace up to find ceiling/sky height, then trace down from just below it
+bool FindGroundAt(const float targetXY[3], const float mortarPos[3], float result[3])
+{
+    // Stage 1: trace upward from mortar height at target XY to find ceiling
+    float upStart[3];
+    upStart[0] = targetXY[0];
+    upStart[1] = targetXY[1];
+    upStart[2] = mortarPos[2];
+    
+    float upEnd[3];
+    upEnd[0] = targetXY[0];
+    upEnd[1] = targetXY[1];
+    upEnd[2] = mortarPos[2] + 10000.0;
+    
+    Handle upTrace = TR_TraceRayFilterEx(upStart, upEnd, MASK_SOLID_BRUSHONLY, RayType_EndPoint, TraceFilter_IgnorePlayers);
+    
+    float downStart[3];
+    if (TR_DidHit(upTrace))
+    {
+        float ceilingPos[3];
+        TR_GetEndPosition(ceilingPos, upTrace);
+        downStart[0] = targetXY[0];
+        downStart[1] = targetXY[1];
+        downStart[2] = ceilingPos[2] - 16.0;  // just below ceiling
+    }
+    else
+    {
+        // No ceiling hit - use endpoint of upward trace as start
+        downStart[0] = targetXY[0];
+        downStart[1] = targetXY[1];
+        downStart[2] = upEnd[2] - 16.0;
+    }
+    delete upTrace;
+    
+    // Stage 2: trace down from just below ceiling
+    return TraceToGround(downStart, result);
+}
+
 bool IsUnderRoof(const float mortarPos[3])
 {
     float upPos[3];
@@ -1057,10 +1242,12 @@ public bool TraceFilter_IgnorePlayers(int entity, int contentsMask, any data)
     return true;
 }
 
-bool IsValidClient(int client, bool checkAlive = false)
+bool IsValidClient(int client, bool checkAlive = false, bool allowBots = false)
 {
     if (client > 0 && client <= MaxClients && IsClientConnected(client) && IsClientInGame(client))
     {
+        if (!allowBots && IsFakeClient(client))
+            return false;
         if (checkAlive && !IsPlayerAlive(client))
             return false;
         return true;
