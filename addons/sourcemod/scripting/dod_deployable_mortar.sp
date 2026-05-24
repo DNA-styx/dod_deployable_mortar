@@ -5,7 +5,7 @@
 #pragma semicolon 1
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.8.29"
+#define PLUGIN_VERSION "0.8.30"
 
 // Model path
 #define MORTAR_MODEL "models/surgeon/mortar34.mdl"
@@ -42,7 +42,6 @@
 // Menu state constants
 #define MENU_STATE_NORMAL 0
 #define MENU_STATE_UNDER_ROOF 1
-#define MENU_STATE_ALREADY_OWN 2
 
 // Track all spawned mortars
 int g_SpawnedMortars[MAX_MORTARS];
@@ -375,10 +374,6 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
     {
         Format(title, sizeof(title), "Deployable Mortar *** ERROR ***\n \n• Place in the open, not under cover\n• Move outside - roof detected\n ");
     }
-    else if (state == MENU_STATE_ALREADY_OWN)
-    {
-        Format(title, sizeof(title), "Deployable Mortar\n \n• Remove your current mortar first\n ");
-    }
     else if (mortarIndex < 0)
     {
         Format(title, sizeof(title), "Deployable Mortar\n \n• Place in the open, not under cover\n• Smoke shows where shell will land\n• Shoot or hit mortar to fire\n ");
@@ -405,11 +400,7 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
     {
         char placermItem[16];
         Format(placermItem, sizeof(placermItem), "placerm_%s", indexStr);
-        
-        if (state == MENU_STATE_ALREADY_OWN)
-            menu.AddItem(placermItem, "Place Mortar", ITEMDRAW_DISABLED);
-        else
-            menu.AddItem(placermItem, "Place Mortar");
+        menu.AddItem(placermItem, "Place Mortar");
     }
     else
     {
@@ -1101,20 +1092,6 @@ public Action Timer_CreateExplosion(Handle timer, DataPack pack)
         AcceptEntityInput(explosion, "Explode");
         CreateTimer(0.1, Timer_RemoveEntity, EntIndexToEntRef(explosion));
     }
-    
-    CreateShakeEntity(pos);
-    
-    return Plugin_Stop;
-}
-
-public Action Timer_CreateShakeOnly(Handle timer, DataPack pack)
-{
-    pack.Reset();
-    float pos[3];
-    pos[0] = pack.ReadFloat();
-    pos[1] = pack.ReadFloat();
-    pos[2] = pack.ReadFloat();
-    delete pack;
     
     CreateShakeEntity(pos);
     
