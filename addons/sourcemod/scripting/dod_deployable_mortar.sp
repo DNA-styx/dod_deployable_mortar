@@ -5,7 +5,7 @@
 #pragma semicolon 1
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.8.27"
+#define PLUGIN_VERSION "0.8.29"
 
 // Model path
 #define MORTAR_MODEL "models/surgeon/mortar34.mdl"
@@ -151,6 +151,21 @@ public Action OnPlayerDeath(Handle event, const char[] name, bool dontBroadcast)
     
     if (!IsValidClient(victim, false, true))
         return Plugin_Continue;
+    
+    // If victim owns a mortar, refresh menu to disable items
+    if (!IsFakeClient(victim))
+    {
+        for (int i = 0; i < g_MortarCount; i++)
+        {
+            if (g_MortarOwner[i] == victim)
+            {
+                int mortar = EntRefToEntIndex(g_SpawnedMortars[i]);
+                if (mortar != INVALID_ENT_REFERENCE && IsValidEntity(mortar))
+                    ShowMortarMenu(victim, i, MENU_STATE_NORMAL);
+                break;
+            }
+        }
+    }
     
     // Only check world kills for kill credit (env_explosion has no attacker)
     if (attacker != 0)
@@ -358,7 +373,7 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
     
     if (state == MENU_STATE_UNDER_ROOF)
     {
-        Format(title, sizeof(title), "Deployable Mortar\n \n• Place in the open, not under cover\n• Move outside - roof detected\n ");
+        Format(title, sizeof(title), "Deployable Mortar *** ERROR ***\n \n• Place in the open, not under cover\n• Move outside - roof detected\n ");
     }
     else if (state == MENU_STATE_ALREADY_OWN)
     {
@@ -398,49 +413,48 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
     }
     else
     {
-        // Mortar placed - full control menu, no spacer before first item
+        bool alive = IsPlayerAlive(client);
+        bool reloading = (g_ReloadTimer[mortarIndex] != INVALID_HANDLE);
+        
         char placermItem[16];
         Format(placermItem, sizeof(placermItem), "placerm_%s", indexStr);
-        menu.AddItem(placermItem, "Remove Mortar");
+        menu.AddItem(placermItem, "Remove Mortar", alive ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
         
         char fireItem[16];
         Format(fireItem, sizeof(fireItem), "fire_%s", indexStr);
-        if (IsPlayerAlive(client))
-            menu.AddItem(fireItem, "Fire Mortar");
-        else
-            menu.AddItem(fireItem, "Fire Mortar", ITEMDRAW_DISABLED);
+        menu.AddItem(fireItem, "Fire Mortar", (alive && !reloading) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
         
         menu.AddItem("", "", ITEMDRAW_IGNORE);
         
         char incItem[16];
         Format(incItem, sizeof(incItem), "inc_%s", indexStr);
-        if (g_MortarRange[mortarIndex] < RANGE_MAX)
-            menu.AddItem(incItem, "Increase Range (+200)");
+        if (!alive || g_MortarRange[mortarIndex] >= RANGE_MAX)
+            menu.AddItem(incItem, "Increase Range (+200)", ITEMDRAW_DISABLED);
         else
-            menu.AddItem(incItem, "Increase Range (MAX)", ITEMDRAW_DISABLED);
+            menu.AddItem(incItem, "Increase Range (+200)");
         
         char decItem[16];
         Format(decItem, sizeof(decItem), "dec_%s", indexStr);
-        if (g_MortarRange[mortarIndex] > RANGE_MIN)
-            menu.AddItem(decItem, "Decrease Range (-200)");
+        if (!alive || g_MortarRange[mortarIndex] <= RANGE_MIN)
+            menu.AddItem(decItem, "Decrease Range (-200)", ITEMDRAW_DISABLED);
         else
-            menu.AddItem(decItem, "Decrease Range (MIN)", ITEMDRAW_DISABLED);
+            menu.AddItem(decItem, "Decrease Range (-200)");
         
         menu.AddItem("", "", ITEMDRAW_IGNORE);
         
         char rotLeftItem[16];
         Format(rotLeftItem, sizeof(rotLeftItem), "rotleft_%s", indexStr);
-        if (g_MortarRotation[mortarIndex] < 45.0)
-            menu.AddItem(rotLeftItem, "Rotate Left");
+        if (!alive || g_MortarRotation[mortarIndex] >= 45.0)
+            menu.AddItem(rotLeftItem, "Rotate Left", ITEMDRAW_DISABLED);
         else
-            menu.AddItem(rotLeftItem, "Rotate Left (MAX)", ITEMDRAW_DISABLED);
+            menu.AddItem(rotLeftItem, "Rotate Left");
         
         char rotRightItem[16];
         Format(rotRightItem, sizeof(rotRightItem), "rotright_%s", indexStr);
-        if (g_MortarRotation[mortarIndex] > -45.0)
-            menu.AddItem(rotRightItem, "Rotate Right");
+        if (!alive || g_MortarRotation[mortarIndex] <= -45.0)
+            menu.AddItem(rotRightItem, "Rotate Right", ITEMDRAW_DISABLED);
         else
-            menu.AddItem(rotRightItem, "Rotate Right (MIN)", ITEMDRAW_DISABLED);
+            menu.AddItem(rotRightItem, "Rotate Right");
     }
     
     menu.ExitButton = true;
@@ -1038,6 +1052,12 @@ public Action Timer_PlayReloadSound(Handle timer, DataPack pack)
     g_ReloadTimer[mortarIndex] = INVALID_HANDLE;
     
     EmitSoundToAll(SOUND_RELOAD, SOUND_FROM_WORLD, SNDCHAN_AUTO, SNDLEVEL_NORMAL, SND_NOFLAGS, 1.0, SNDPITCH_NORMAL, -1, pos);
+    
+    // Refresh menu to re-enable Fire Mortar
+    int owner = g_MortarOwner[mortarIndex];
+    if (IsValidClient(owner) && IsPlayerAlive(owner))
+        ShowMortarMenu(owner, mortarIndex, MENU_STATE_NORMAL);
+    
     return Plugin_Stop;
 }
 
