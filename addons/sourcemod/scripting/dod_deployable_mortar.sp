@@ -5,7 +5,7 @@
 #pragma semicolon 1
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.8.30"
+#define PLUGIN_VERSION "0.8.31"
 
 // Model path
 #define MORTAR_MODEL "models/surgeon/mortar34.mdl"
@@ -92,6 +92,7 @@ public void OnPluginStart()
     AddCommandListener(Listener_Say, "say_team");
     HookEvent("player_death", OnPlayerDeath, EventHookMode_Post);
     HookEvent("dod_round_start", OnRoundStart, EventHookMode_PostNoCopy);
+    HookEvent("dod_round_win", OnRoundWin, EventHookMode_PostNoCopy);
     HookEvent("player_team", OnPlayerTeam, EventHookMode_Post);
     HookEvent("player_spawn", OnPlayerSpawn, EventHookMode_Post);
     PrintToServer("[DeployableMortar] Loaded - v%s", PLUGIN_VERSION);
@@ -242,6 +243,12 @@ public Action OnRoundStart(Handle event, const char[] name, bool dontBroadcast)
     return Plugin_Continue;
 }
 
+public Action OnRoundWin(Handle event, const char[] name, bool dontBroadcast)
+{
+    CancelAllMenus();
+    return Plugin_Continue;
+}
+
 public Action OnPlayerTeam(Handle event, const char[] name, bool dontBroadcast)
 {
     int client = GetClientOfUserId(GetEventInt(event, "userid"));
@@ -372,7 +379,7 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
     
     if (state == MENU_STATE_UNDER_ROOF)
     {
-        Format(title, sizeof(title), "Deployable Mortar *** ERROR ***\n \n• Place in the open, not under cover\n• Move outside - roof detected\n ");
+        Format(title, sizeof(title), "Deployable Mortar *** ERROR *** \n \n• Place in the open, not under cover\n• Move outside - roof detected\n ");
     }
     else if (mortarIndex < 0)
     {
