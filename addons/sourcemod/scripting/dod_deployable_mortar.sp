@@ -5,7 +5,7 @@
 #pragma semicolon 1
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.8.31"
+#define PLUGIN_VERSION "0.8.33"
 
 // Model path
 #define MORTAR_MODEL "models/surgeon/mortar34.mdl"
@@ -68,6 +68,9 @@ float g_LastExplosionPos[MAX_MORTARS][3];
 Handle g_SteamTimer[MAX_MORTARS];
 Handle g_ReloadTimer[MAX_MORTARS];
 Handle g_ExplosionTimer[MAX_MORTARS];
+
+// Track if mortar target is in a restricted zone
+bool g_MortarBlocked[MAX_MORTARS];
 
 ConVar g_CvarWelcome;
 int g_SteamEntity[MAX_MORTARS];
@@ -379,11 +382,15 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
     
     if (state == MENU_STATE_UNDER_ROOF)
     {
-        Format(title, sizeof(title), "Deployable Mortar *** ERROR *** \n \n• Place in the open, not under cover\n• Move outside - roof detected\n ");
+        Format(title, sizeof(title), "Deployable Mortar *** ERROR ***\n \n• Place in the open, not under cover\n• Move outside - roof detected\n ");
     }
     else if (mortarIndex < 0)
     {
         Format(title, sizeof(title), "Deployable Mortar\n \n• Place in the open, not under cover\n• Smoke shows where shell will land\n• Shoot or hit mortar to fire\n ");
+    }
+    else if (g_MortarBlocked[mortarIndex])
+    {
+        Format(title, sizeof(title), "Deployable Mortar - Target Restricted");
     }
     else
     {
@@ -413,6 +420,7 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
     {
         bool alive = IsPlayerAlive(client);
         bool reloading = (g_ReloadTimer[mortarIndex] != INVALID_HANDLE);
+        bool blocked = g_MortarBlocked[mortarIndex];
         
         char placermItem[16];
         Format(placermItem, sizeof(placermItem), "placerm_%s", indexStr);
@@ -420,7 +428,7 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
         
         char fireItem[16];
         Format(fireItem, sizeof(fireItem), "fire_%s", indexStr);
-        menu.AddItem(fireItem, "Fire Mortar", (alive && !reloading) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
+        menu.AddItem(fireItem, "Fire Mortar", (alive && !reloading && !blocked) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
         
         menu.AddItem("", "", ITEMDRAW_IGNORE);
         
@@ -534,6 +542,7 @@ public int MenuHandler_Mortar(Menu menu, MenuAction action, int param1, int para
                 g_ReloadTimer[newMortarIndex] = INVALID_HANDLE;
                 g_ExplosionTimer[newMortarIndex] = INVALID_HANDLE;
                 g_SteamEntity[newMortarIndex] = INVALID_ENT_REFERENCE;
+                g_MortarBlocked[newMortarIndex] = false;
                 g_MortarCount++;
                 
                 UpdateTargetSprite(newMortarIndex);
@@ -550,14 +559,17 @@ public int MenuHandler_Mortar(Menu menu, MenuAction action, int param1, int para
         
         if (StrEqual(parts[0], "fire"))
         {
-            float currentTime = GetGameTime();
-            if (currentTime - g_LastFireTime[mortarIndex] >= FIRE_COOLDOWN)
+            if (!g_MortarBlocked[mortarIndex])
             {
-                g_LastFireTime[mortarIndex] = currentTime;
-                float mortarPos[3], mortarAngles[3];
-                GetEntPropVector(mortar, Prop_Send, "m_vecOrigin", mortarPos);
-                GetEntPropVector(mortar, Prop_Send, "m_angRotation", mortarAngles);
-                FireMortarEffects(mortarPos, mortarAngles, mortarIndex);
+                float currentTime = GetGameTime();
+                if (currentTime - g_LastFireTime[mortarIndex] >= FIRE_COOLDOWN)
+                {
+                    g_LastFireTime[mortarIndex] = currentTime;
+                    float mortarPos[3], mortarAngles[3];
+                    GetEntPropVector(mortar, Prop_Send, "m_vecOrigin", mortarPos);
+                    GetEntPropVector(mortar, Prop_Send, "m_angRotation", mortarAngles);
+                    FireMortarEffects(mortarPos, mortarAngles, mortarIndex);
+                }
             }
         }
         else if (StrEqual(parts[0], "inc"))
@@ -645,6 +657,7 @@ void RemoveMortar(int mortarIndex)
     g_SteamTimer[mortarIndex] = INVALID_HANDLE;
     g_ReloadTimer[mortarIndex] = INVALID_HANDLE;
     g_ExplosionTimer[mortarIndex] = INVALID_HANDLE;
+    g_MortarBlocked[mortarIndex] = false;
 }
 
 void RotateMortar(int mortarIndex, float rotationDelta)
@@ -782,6 +795,9 @@ public Action OnHelperDamage(int victim, int &attacker, int &inflictor, float &d
     if (attacker == mortarOwner)
     {
         // Owner shooting = fire mortar
+        if (g_MortarBlocked[mortarIndex])
+            return Plugin_Handled;
+        
         float currentTime = GetGameTime();
         if (currentTime - g_LastFireTime[mortarIndex] < FIRE_COOLDOWN)
             return Plugin_Handled;
@@ -906,6 +922,18 @@ void UpdateTargetSprite(int mortarIndex)
     float groundPos[3];
     if (!FindGroundAt(targetPos, mortarPos, groundPos))
         return;
+    
+    // Check restricted zones and update blocked state
+    bool wasBlocked = g_MortarBlocked[mortarIndex];
+    g_MortarBlocked[mortarIndex] = IsTargetInRestrictedZone(groundPos);
+    
+    // Refresh menu if blocked state changed
+    if (wasBlocked != g_MortarBlocked[mortarIndex])
+    {
+        int owner = g_MortarOwner[mortarIndex];
+        if (IsValidClient(owner) && IsPlayerAlive(owner))
+            ShowMortarMenu(owner, mortarIndex, MENU_STATE_NORMAL);
+    }
     
     int oldSprite = EntRefToEntIndex(g_MortarTargetSprite[mortarIndex]);
     if (oldSprite != INVALID_ENT_REFERENCE && IsValidEntity(oldSprite))
@@ -1165,6 +1193,36 @@ void RemoveAllMortars()
             AcceptEntityInput(sprite, "Kill");
     }
     g_MortarCount = 0;
+}
+
+bool IsTargetInRestrictedZone(const float targetPos[3])
+{
+    static const char restrictedEntities[][] = {
+        "dod_control_point",
+        "dod_bomb_target",
+        "dod_bomb_dispenser",
+        "info_teleport_destination",
+        "info_player_allies",
+        "info_player_axis"
+    };
+    
+    // Use a reasonable exclusion zone around objectives/spawns
+    float checkRadius = 300.0;
+    
+    for (int t = 0; t < 6; t++)
+    {
+        int ent = -1;
+        while ((ent = FindEntityByClassname(ent, restrictedEntities[t])) != -1)
+        {
+            float entPos[3];
+            GetEntPropVector(ent, Prop_Send, "m_vecOrigin", entPos);
+            
+            if (GetVectorDistance(targetPos, entPos) <= checkRadius)
+                return true;
+        }
+    }
+    
+    return false;
 }
 
 bool TraceToGround(const float start[3], float result[3])
