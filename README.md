@@ -17,9 +17,12 @@
 
 - Menu-based controls to deploy, remove, fire, rotate, and adjust mortar range
 - Green smoke marks where the shell will land before firing
+- Fire is restricted near objectives, bomb points, and spawn areas to prevent spawn killing
 - Mortars have health and can be destroyed by enemy fire
-- Welcome message on join letting players know the mortar is available
-- Chat notifications for kills
+- Mortar persists when the owner dies but is removed if they change team or go to spectator
+- All menu controls disabled when dead and during reload cooldown, re-enabled automatically
+- (optional) Welcome message on join letting players know the mortar is available
+- Chat notifications for kills with team colours
 - HLStatsX support for kills and mortar destructions
 
 ## Installation
@@ -76,4 +79,3 @@ From the HLStatsX admin page, add the following:
 
 ---
 
-> [GitHub Repository](https://github.com/DNA-styx/dod_deployable_mortar)
