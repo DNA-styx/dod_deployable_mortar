@@ -5,7 +5,7 @@
 #pragma semicolon 1
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.8.33"
+#define PLUGIN_VERSION "0.9.0"
 
 // Model path
 #define MORTAR_MODEL "models/surgeon/mortar34.mdl"
