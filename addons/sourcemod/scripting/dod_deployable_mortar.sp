@@ -5,7 +5,7 @@
 #pragma semicolon 1
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.9.0"
+#define PLUGIN_VERSION "0.9.4"
 
 // Model path
 #define MORTAR_MODEL "models/surgeon/mortar34.mdl"
@@ -71,6 +71,7 @@ Handle g_ExplosionTimer[MAX_MORTARS];
 
 // Track if mortar target is in a restricted zone
 bool g_MortarBlocked[MAX_MORTARS];
+char g_MortarBlockReason[MAX_MORTARS][32];
 
 ConVar g_CvarWelcome;
 int g_SteamEntity[MAX_MORTARS];
@@ -125,6 +126,7 @@ public void OnClientDisconnect(int client)
         if (g_MortarOwner[i] == client)
         {
             RemoveMortar(i);
+            break;
         }
     }
 }
@@ -307,6 +309,12 @@ void CancelAllMenus()
     }
 }
 
+public void OnMapEnd()
+{
+    CancelAllMenus();
+    RemoveAllMortars();
+}
+
 public void OnMapStart()
 {
     CancelAllMenus();
@@ -382,19 +390,19 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
     
     if (state == MENU_STATE_UNDER_ROOF)
     {
-        Format(title, sizeof(title), "Deployable Mortar *** ERROR ***\n \n• Place in the open, not under cover\n• Move outside - roof detected\n ");
+        Format(title, sizeof(title), "Mortar - Restricted: Inside\n \n• Place in the open, not under cover\n• Move outside - roof detected\n ");
     }
     else if (mortarIndex < 0)
     {
-        Format(title, sizeof(title), "Deployable Mortar\n \n• Place in the open, not under cover\n• Smoke shows where shell will land\n• Shoot or hit mortar to fire\n ");
+        Format(title, sizeof(title), "Mortar\n \n• Smoke shows where shell will land\n• Shoot or hit mortar to fire\n ");
     }
     else if (g_MortarBlocked[mortarIndex])
     {
-        Format(title, sizeof(title), "Deployable Mortar - Target Restricted");
+        Format(title, sizeof(title), "Mortar - Restricted: %s", g_MortarBlockReason[mortarIndex]);
     }
     else
     {
-        Format(title, sizeof(title), "Deployable Mortar (Range: %d)", g_MortarRange[mortarIndex]);
+        Format(title, sizeof(title), "Mortar - Range: %d", g_MortarRange[mortarIndex]);
     }
     
     menu.SetTitle(title);
@@ -638,7 +646,7 @@ void RemoveMortar(int mortarIndex)
     // Cancel steam timer and kill steam entity
     if (g_SteamTimer[mortarIndex] != INVALID_HANDLE)
     {
-        KillTimer(g_SteamTimer[mortarIndex]);
+        KillTimer(g_SteamTimer[mortarIndex], true);
         g_SteamTimer[mortarIndex] = INVALID_HANDLE;
     }
     int steam = EntRefToEntIndex(g_SteamEntity[mortarIndex]);
@@ -658,6 +666,7 @@ void RemoveMortar(int mortarIndex)
     g_ReloadTimer[mortarIndex] = INVALID_HANDLE;
     g_ExplosionTimer[mortarIndex] = INVALID_HANDLE;
     g_MortarBlocked[mortarIndex] = false;
+    g_MortarBlockReason[mortarIndex][0] = '\0';
 }
 
 void RotateMortar(int mortarIndex, float rotationDelta)
@@ -925,7 +934,7 @@ void UpdateTargetSprite(int mortarIndex)
     
     // Check restricted zones and update blocked state
     bool wasBlocked = g_MortarBlocked[mortarIndex];
-    g_MortarBlocked[mortarIndex] = IsTargetInRestrictedZone(groundPos);
+    g_MortarBlocked[mortarIndex] = IsTargetInRestrictedZone(groundPos, g_MortarBlockReason[mortarIndex], sizeof(g_MortarBlockReason[]));
     
     // Refresh menu if blocked state changed
     if (wasBlocked != g_MortarBlocked[mortarIndex])
@@ -1180,22 +1189,12 @@ void RemoveAllMortars()
 {
     for (int i = 0; i < g_MortarCount; i++)
     {
-        int entity = EntRefToEntIndex(g_SpawnedMortars[i]);
-        if (entity != INVALID_ENT_REFERENCE && IsValidEntity(entity))
-            AcceptEntityInput(entity, "Kill");
-        
-        int helper = EntRefToEntIndex(g_SpawnedHelpers[i]);
-        if (helper != INVALID_ENT_REFERENCE && IsValidEntity(helper))
-            AcceptEntityInput(helper, "Kill");
-        
-        int sprite = EntRefToEntIndex(g_MortarTargetSprite[i]);
-        if (sprite != INVALID_ENT_REFERENCE && IsValidEntity(sprite))
-            AcceptEntityInput(sprite, "Kill");
+        RemoveMortar(i);
     }
     g_MortarCount = 0;
 }
 
-bool IsTargetInRestrictedZone(const float targetPos[3])
+bool IsTargetInRestrictedZone(const float targetPos[3], char[] reason, int maxlen)
 {
     static const char restrictedEntities[][] = {
         "dod_control_point",
@@ -1206,7 +1205,15 @@ bool IsTargetInRestrictedZone(const float targetPos[3])
         "info_player_axis"
     };
     
-    // Use a reasonable exclusion zone around objectives/spawns
+    static const char restrictedReasons[][] = {
+        "Flag",
+        "Bomb Plant",
+        "Bomb Disp.",
+        "Spawn",
+        "Spawn",
+        "Spawn"
+    };
+    
     float checkRadius = 300.0;
     
     for (int t = 0; t < 6; t++)
@@ -1218,10 +1225,14 @@ bool IsTargetInRestrictedZone(const float targetPos[3])
             GetEntPropVector(ent, Prop_Send, "m_vecOrigin", entPos);
             
             if (GetVectorDistance(targetPos, entPos) <= checkRadius)
+            {
+                strcopy(reason, maxlen, restrictedReasons[t]);
                 return true;
+            }
         }
     }
     
+    reason[0] = '\0';
     return false;
 }
 
