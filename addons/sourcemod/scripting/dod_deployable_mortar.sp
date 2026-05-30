@@ -5,7 +5,7 @@
 #pragma semicolon 1
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.9.4"
+#define PLUGIN_VERSION "0.9.6"
 
 // Model path
 #define MORTAR_MODEL "models/surgeon/mortar34.mdl"
@@ -74,7 +74,11 @@ bool g_MortarBlocked[MAX_MORTARS];
 char g_MortarBlockReason[MAX_MORTARS][32];
 
 ConVar g_CvarWelcome;
+ConVar g_CvarMaxShots;
 int g_SteamEntity[MAX_MORTARS];
+
+// Track shots fired per mortar
+int g_MortarShotsFired[MAX_MORTARS];
 
 public Plugin myinfo =
 {
@@ -89,6 +93,7 @@ public void OnPluginStart()
 {
     CreateConVar("dod_deployable_mortar_version", PLUGIN_VERSION, "DoD Deployable Mortar Version", FCVAR_NOTIFY|FCVAR_DONTRECORD);
     g_CvarWelcome = CreateConVar("dod_deployable_mortar_welcome", "1", "Show welcome message to players on connect (0=off, 1=on)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+    g_CvarMaxShots = CreateConVar("dod_deployable_mortar_shots", "5", "Number of shots before mortar is destroyed (0=unlimited)", FCVAR_NOTIFY, true, 0.0);
     
     AutoExecConfig(true, "dod_deployable_mortar");
     RegConsoleCmd("sm_mortar", Command_SpawnMortar, "Deploy a mortar");
@@ -390,19 +395,19 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
     
     if (state == MENU_STATE_UNDER_ROOF)
     {
-        Format(title, sizeof(title), "Mortar - Restricted: Inside\n \n• Place in the open, not under cover\n• Move outside - roof detected\n ");
+        Format(title, sizeof(title), "Deployable Mortar *** ERROR ***\n \n• Place in the open, not under cover\n• Move outside - roof detected\n ");
     }
     else if (mortarIndex < 0)
     {
-        Format(title, sizeof(title), "Mortar\n \n• Smoke shows where shell will land\n• Shoot or hit mortar to fire\n ");
+        Format(title, sizeof(title), "Deployable Mortar\n \n• Place in the open, not under cover\n• Smoke shows where shell will land\n• Shoot or hit mortar to fire\n ");
     }
     else if (g_MortarBlocked[mortarIndex])
     {
-        Format(title, sizeof(title), "Mortar - Restricted: %s", g_MortarBlockReason[mortarIndex]);
+        Format(title, sizeof(title), "Deployable Mortar - Restricted (%s)", g_MortarBlockReason[mortarIndex]);
     }
     else
     {
-        Format(title, sizeof(title), "Mortar - Range: %d", g_MortarRange[mortarIndex]);
+        Format(title, sizeof(title), "Deployable Mortar (Range: %d)", g_MortarRange[mortarIndex]);
     }
     
     menu.SetTitle(title);
@@ -436,7 +441,20 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
         
         char fireItem[16];
         Format(fireItem, sizeof(fireItem), "fire_%s", indexStr);
-        menu.AddItem(fireItem, "Fire Mortar", (alive && !reloading && !blocked) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
+        
+        char fireLabel[32];
+        int maxShots = g_CvarMaxShots.IntValue;
+        if (maxShots > 0)
+        {
+            int shotsLeft = maxShots - g_MortarShotsFired[mortarIndex];
+            Format(fireLabel, sizeof(fireLabel), "Fire Mortar (%d rounds)", shotsLeft);
+        }
+        else
+        {
+            strcopy(fireLabel, sizeof(fireLabel), "Fire Mortar");
+        }
+        
+        menu.AddItem(fireItem, fireLabel, (alive && !reloading && !blocked) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
         
         menu.AddItem("", "", ITEMDRAW_IGNORE);
         
@@ -551,6 +569,7 @@ public int MenuHandler_Mortar(Menu menu, MenuAction action, int param1, int para
                 g_ExplosionTimer[newMortarIndex] = INVALID_HANDLE;
                 g_SteamEntity[newMortarIndex] = INVALID_ENT_REFERENCE;
                 g_MortarBlocked[newMortarIndex] = false;
+                g_MortarShotsFired[newMortarIndex] = 0;
                 g_MortarCount++;
                 
                 UpdateTargetSprite(newMortarIndex);
@@ -667,6 +686,7 @@ void RemoveMortar(int mortarIndex)
     g_ExplosionTimer[mortarIndex] = INVALID_HANDLE;
     g_MortarBlocked[mortarIndex] = false;
     g_MortarBlockReason[mortarIndex][0] = '\0';
+    g_MortarShotsFired[mortarIndex] = 0;
 }
 
 void RotateMortar(int mortarIndex, float rotationDelta)
@@ -841,7 +861,7 @@ public Action OnHelperDamage(int victim, int &attacker, int &inflictor, float &d
 void DestroyMortar(int mortarIndex, int owner, int destroyer, const float pos[3])
 {
     // Log destruction for HLStatsX
-    if (IsValidClient(destroyer) && IsValidClient(owner))
+    if (destroyer != -1 && IsValidClient(destroyer) && IsValidClient(owner))
     {
         char destroyerName[MAX_NAME_LENGTH], ownerName[MAX_NAME_LENGTH];
         GetClientName(destroyer, destroyerName, sizeof(destroyerName));
@@ -979,6 +999,12 @@ void UpdateTargetSprite(int mortarIndex)
 
 void FireMortarEffects(const float pos[3], const float mortarAngles[3], int mortarIndex)
 {
+    // Increment shot counter
+    g_MortarShotsFired[mortarIndex]++;
+    
+    int maxShots = g_CvarMaxShots.IntValue;
+    bool lastShot = (maxShots > 0 && g_MortarShotsFired[mortarIndex] >= maxShots);
+    
     float explosionPos[3];
     explosionPos[0] = pos[0] + (float(g_MortarRange[mortarIndex]) * Cosine(DegToRad(mortarAngles[1])));
     explosionPos[1] = pos[1] + (float(g_MortarRange[mortarIndex]) * Sine(DegToRad(mortarAngles[1])));
@@ -1016,6 +1042,17 @@ void FireMortarEffects(const float pos[3], const float mortarAngles[3], int mort
     reloadPack.WriteFloat(pos[2]);
     reloadPack.WriteCell(mortarIndex);
     g_ReloadTimer[mortarIndex] = CreateTimer(5.0, Timer_PlayReloadSound, reloadPack);
+    
+    // Destroy mortar after last shot (after reload completes)
+    if (lastShot)
+    {
+        DataPack destroyPack = new DataPack();
+        destroyPack.WriteCell(mortarIndex);
+        destroyPack.WriteFloat(pos[0]);
+        destroyPack.WriteFloat(pos[1]);
+        destroyPack.WriteFloat(pos[2]);
+        CreateTimer(5.1, Timer_DestroyAfterLastShot, destroyPack);
+    }
 }
 
 void CreateMortarSteam(const float pos[3], const float mortarAngles[3], int mortarIndex)
@@ -1160,6 +1197,26 @@ public Action Timer_TurnOffSteam(Handle timer, DataPack pack)
         if (StrEqual(classname, "env_steam", false))
             RemoveEdict(entity);
     }
+    return Plugin_Stop;
+}
+
+public Action Timer_DestroyAfterLastShot(Handle timer, DataPack pack)
+{
+    pack.Reset();
+    int mortarIndex = pack.ReadCell();
+    float pos[3];
+    pos[0] = pack.ReadFloat();
+    pos[1] = pack.ReadFloat();
+    pos[2] = pack.ReadFloat();
+    delete pack;
+    
+    // Verify mortar still exists and shot count hasn't been reset (e.g. manually removed)
+    if (g_MortarOwner[mortarIndex] == 0)
+        return Plugin_Stop;
+    
+    int owner = g_MortarOwner[mortarIndex];
+    DestroyMortar(mortarIndex, owner, -1, pos);
+    
     return Plugin_Stop;
 }
 
