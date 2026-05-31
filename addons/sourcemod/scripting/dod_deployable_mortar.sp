@@ -5,17 +5,18 @@
 #pragma semicolon 1
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.9.8"
+#define PLUGIN_VERSION "0.9.12"
 
 // Model path
 #define MORTAR_MODEL "models/surgeon/mortar34.mdl"
+#define MORTAR_MODEL_AXIS "models/props_lg40/lg40.mdl"
+#define MORTAR_MODEL_AXIS_DESTROYED "models/props_lg40/lg40_destroyed.mdl"
 #define HELPER_MODEL "models/props_c17/oildrum001.mdl"
 
 // Sound files
 #define SOUND_FIRING "weapons/mortar_shoot.wav"
 #define SOUND_RELOAD "weapons/rocket_worldreload.wav"
 #define SOUND_INCOMING "weapons/mortar_incoming.wav"
-#define SOUND_DENY "common/weapon_denyselect.wav"
 
 // Distance in front of player to spawn mortar
 #define SPAWN_DISTANCE 80.0
@@ -27,10 +28,11 @@
 #define FIRE_COOLDOWN 5.0
 
 // Range settings
-#define RANGE_MIN 1000
-#define RANGE_MAX 4000
-#define RANGE_STEP 200
-#define RANGE_DEFAULT 1000
+#define RANGE_MIN 1050       // 20m
+#define RANGE_MAX 10500      // 200m
+#define RANGE_STEP 525       // 10m
+#define RANGE_DEFAULT 1050   // 20m
+#define HU_PER_METRE 52.49
 
 // Mortar health
 #define MORTAR_HEALTH 60
@@ -72,6 +74,7 @@ Handle g_ExplosionTimer[MAX_MORTARS];
 // Track if mortar target is in a restricted zone
 bool g_MortarBlocked[MAX_MORTARS];
 char g_MortarBlockReason[MAX_MORTARS][32];
+bool g_MortarOffMap[MAX_MORTARS];
 
 ConVar g_CvarWelcome;
 ConVar g_CvarMaxShots;
@@ -84,7 +87,7 @@ public Plugin myinfo =
 {
     name = "DoD Deployable Mortar",
     author = "Claude.ai guided by DNA.styx",
-    description = "Allows players to deploy and use mortars",
+    description = "Allows players to deploy and use mortars. Allied model by The Surgeon, Axis model by Cpt Ukulele",
     version = PLUGIN_VERSION,
     url = "https://github.com/DNA-styx/dod_deployable_mortar"
 };
@@ -104,7 +107,6 @@ public void OnPluginStart()
     HookEvent("dod_round_win", OnRoundWin, EventHookMode_PostNoCopy);
     HookEvent("player_team", OnPlayerTeam, EventHookMode_Post);
     HookEvent("player_spawn", OnPlayerSpawn, EventHookMode_Post);
-    PrintToServer("[DeployableMortar] Loaded - v%s", PLUGIN_VERSION);
 }
 
 public void OnPluginEnd()
@@ -326,6 +328,8 @@ public void OnMapStart()
     g_MortarCount = 0;
     
     PrecacheModel(MORTAR_MODEL, true);
+    PrecacheModel(MORTAR_MODEL_AXIS, true);
+    PrecacheModel(MORTAR_MODEL_AXIS_DESTROYED, true);
     PrecacheModel(HELPER_MODEL, true);
     PrecacheModel("models/surgeon/mortar34_gib1.mdl", true);
     PrecacheModel("models/surgeon/mortar34_gib2.mdl", true);
@@ -334,7 +338,6 @@ public void OnMapStart()
     PrecacheSound(SOUND_FIRING, true);
     PrecacheSound(SOUND_RELOAD, true);
     PrecacheSound(SOUND_INCOMING, true);
-    PrecacheSound(SOUND_DENY, true);
     
     // Custom mortar models - register all companion files for client download
     AddFileToDownloadsTable("models/surgeon/mortar34.mdl");
@@ -359,6 +362,20 @@ public void OnMapStart()
     AddFileToDownloadsTable("materials/models/surgeon/mortarcase.vtf");
     AddFileToDownloadsTable("materials/models/surgeon/mortarshell.vmt");
     AddFileToDownloadsTable("materials/models/surgeon/mortarshell.vtf");
+    
+    // Axis mortar model (lg40 by Cpt Ukulele)
+    AddFileToDownloadsTable("models/props_lg40/lg40.mdl");
+    AddFileToDownloadsTable("models/props_lg40/lg40.vvd");
+    AddFileToDownloadsTable("models/props_lg40/lg40.dx90.vtx");
+    AddFileToDownloadsTable("models/props_lg40/lg40.phy");
+    AddFileToDownloadsTable("models/props_lg40/lg40_destroyed.mdl");
+    AddFileToDownloadsTable("models/props_lg40/lg40_destroyed.vvd");
+    AddFileToDownloadsTable("models/props_lg40/lg40_destroyed.dx90.vtx");
+    AddFileToDownloadsTable("models/props_lg40/lg40_destroyed.phy");
+    AddFileToDownloadsTable("materials/models/props_lg40/lg40_diffuse.vmt");
+    AddFileToDownloadsTable("materials/models/props_lg40/lg40_diffuse.vtf");
+    AddFileToDownloadsTable("materials/models/props_lg40/lg40_destroyed_diffuse.vmt");
+    AddFileToDownloadsTable("materials/models/props_lg40/lg40_destroyed_diffuse.vtf");
 }
 
 public Action Command_SpawnMortar(int client, int args)
@@ -395,11 +412,15 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
     
     if (state == MENU_STATE_UNDER_ROOF)
     {
-        Format(title, sizeof(title), "Deployable Mortar *** ERROR ***\n \n• Place in the open, not under cover\n• Move outside - roof detected\n ");
+        Format(title, sizeof(title), "Deployable Mortar Restricted (Indoors)\n \n• Place in the open, not under cover\n• Move outside - roof detected\n ");
     }
     else if (mortarIndex < 0)
     {
         Format(title, sizeof(title), "Deployable Mortar\n \n• Place in the open, not under cover\n• Smoke shows where shell will land\n• Shoot or hit mortar to fire\n ");
+    }
+    else if (g_MortarOffMap[mortarIndex])
+    {
+        Format(title, sizeof(title), "Deployable Mortar - Restricted (Off Map)");
     }
     else if (g_MortarBlocked[mortarIndex])
     {
@@ -407,7 +428,7 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
     }
     else
     {
-        Format(title, sizeof(title), "Deployable Mortar (Range: %d)", g_MortarRange[mortarIndex]);
+        Format(title, sizeof(title), "Deployable Mortar (Range: %dm)", RoundToNearest(float(g_MortarRange[mortarIndex]) / HU_PER_METRE));
     }
     
     menu.SetTitle(title);
@@ -433,7 +454,7 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
     {
         bool alive = IsPlayerAlive(client);
         bool reloading = (g_ReloadTimer[mortarIndex] != INVALID_HANDLE);
-        bool blocked = g_MortarBlocked[mortarIndex];
+        bool blocked = g_MortarBlocked[mortarIndex] || g_MortarOffMap[mortarIndex];
         
         char placermItem[16];
         Format(placermItem, sizeof(placermItem), "placerm_%s", indexStr);
@@ -461,16 +482,16 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
         char incItem[16];
         Format(incItem, sizeof(incItem), "inc_%s", indexStr);
         if (!alive || g_MortarRange[mortarIndex] >= RANGE_MAX)
-            menu.AddItem(incItem, "Increase Range (+200)", ITEMDRAW_DISABLED);
+            menu.AddItem(incItem, "Increase Range (+10m)", ITEMDRAW_DISABLED);
         else
-            menu.AddItem(incItem, "Increase Range (+200)");
+            menu.AddItem(incItem, "Increase Range (+10m)");
         
         char decItem[16];
         Format(decItem, sizeof(decItem), "dec_%s", indexStr);
         if (!alive || g_MortarRange[mortarIndex] <= RANGE_MIN)
-            menu.AddItem(decItem, "Decrease Range (-200)", ITEMDRAW_DISABLED);
+            menu.AddItem(decItem, "Decrease Range (-10m)", ITEMDRAW_DISABLED);
         else
-            menu.AddItem(decItem, "Decrease Range (-200)");
+            menu.AddItem(decItem, "Decrease Range (-10m)");
         
         menu.AddItem("", "", ITEMDRAW_IGNORE);
         
@@ -539,7 +560,6 @@ public int MenuHandler_Mortar(Menu menu, MenuAction action, int param1, int para
             // Check if location is under roof
             if (IsUnderRoof(groundPos))
             {
-                EmitSoundToClient(client, SOUND_DENY);
                 ShowMortarMenu(client, -1, MENU_STATE_UNDER_ROOF);
                 return 0;
             }
@@ -569,6 +589,7 @@ public int MenuHandler_Mortar(Menu menu, MenuAction action, int param1, int para
                 g_ExplosionTimer[newMortarIndex] = INVALID_HANDLE;
                 g_SteamEntity[newMortarIndex] = INVALID_ENT_REFERENCE;
                 g_MortarBlocked[newMortarIndex] = false;
+                g_MortarOffMap[newMortarIndex] = false;
                 g_MortarShotsFired[newMortarIndex] = 0;
                 g_MortarCount++;
                 
@@ -686,6 +707,7 @@ void RemoveMortar(int mortarIndex)
     g_ExplosionTimer[mortarIndex] = INVALID_HANDLE;
     g_MortarBlocked[mortarIndex] = false;
     g_MortarBlockReason[mortarIndex][0] = '\0';
+    g_MortarOffMap[mortarIndex] = false;
     g_MortarShotsFired[mortarIndex] = 0;
 }
 
@@ -732,7 +754,13 @@ int CreateMortarEntity(const float pos[3], float yaw, int owner)
         return -1;
     }
     
-    DispatchKeyValue(entity, "model", MORTAR_MODEL);
+    char model[64];
+    if (GetClientTeam(owner) == TEAM_AXIS)
+        strcopy(model, sizeof(model), MORTAR_MODEL_AXIS);
+    else
+        strcopy(model, sizeof(model), MORTAR_MODEL);
+    
+    DispatchKeyValue(entity, "model", model);
     DispatchKeyValue(entity, "solid", "6");
     DispatchKeyValue(entity, "spawnflags", "0");
     
@@ -824,7 +852,7 @@ public Action OnHelperDamage(int victim, int &attacker, int &inflictor, float &d
     if (attacker == mortarOwner)
     {
         // Owner shooting = fire mortar
-        if (g_MortarBlocked[mortarIndex])
+        if (g_MortarBlocked[mortarIndex] || g_MortarOffMap[mortarIndex])
             return Plugin_Handled;
         
         float currentTime = GetGameTime();
@@ -887,11 +915,29 @@ void DestroyMortar(int mortarIndex, int owner, int destroyer, const float pos[3]
             destroyerName, GetClientUserId(destroyer), destroyerSteamId, GetClientTeam(destroyer) == TEAM_ALLIES ? "Allies" : "Axis",
             ownerName, GetClientUserId(owner), ownerSteamId, GetClientTeam(owner) == TEAM_ALLIES ? "Allies" : "Axis");
     }
-    // Spawn gibs - matching reference entity angles
-    SpawnGib("models/surgeon/mortar34_gib1.mdl", pos, "-65 250 0");
-    SpawnGib("models/surgeon/mortar34_gib2.mdl", pos, "0 250 0");
-    SpawnGib("models/surgeon/mortar34_gib3.mdl", pos, "-30 300 0");
-    SpawnGib("models/surgeon/mortar34_gib3.mdl", pos, "-30 200 0");
+    // Spawn destruction effect based on team
+    if (IsValidClient(owner) && GetClientTeam(owner) == TEAM_AXIS)
+    {
+        // Axis: spawn destroyed model prop_dynamic, remove after 15 seconds
+        int destroyed = CreateEntityByName("prop_dynamic");
+        if (destroyed != -1)
+        {
+            DispatchKeyValue(destroyed, "model", MORTAR_MODEL_AXIS_DESTROYED);
+            DispatchKeyValue(destroyed, "solid", "0");
+            TeleportEntity(destroyed, pos, NULL_VECTOR, NULL_VECTOR);
+            DispatchSpawn(destroyed);
+            ActivateEntity(destroyed);
+            CreateTimer(15.0, Timer_RemoveEntity, EntIndexToEntRef(destroyed));
+        }
+    }
+    else
+    {
+        // Allies: spawn gibs
+        SpawnGib("models/surgeon/mortar34_gib1.mdl", pos, "-65 250 0");
+        SpawnGib("models/surgeon/mortar34_gib2.mdl", pos, "0 250 0");
+        SpawnGib("models/surgeon/mortar34_gib3.mdl", pos, "-30 300 0");
+        SpawnGib("models/surgeon/mortar34_gib3.mdl", pos, "-30 200 0");
+    }
     
     // Spawn dust
     int dust = CreateEntityByName("env_dustpuff");
@@ -955,14 +1001,28 @@ void UpdateTargetSprite(int mortarIndex)
     
     float groundPos[3];
     if (!FindGroundAt(targetPos, mortarPos, groundPos))
+    {
+        bool wasOffMap = g_MortarOffMap[mortarIndex];
+        g_MortarOffMap[mortarIndex] = true;
+        if (!wasOffMap)
+        {
+            int owner = g_MortarOwner[mortarIndex];
+            if (IsValidClient(owner) && IsPlayerAlive(owner))
+                ShowMortarMenu(owner, mortarIndex, MENU_STATE_NORMAL);
+        }
         return;
+    }
+    
+    // Ground found - clear off-map state
+    bool wasOffMap = g_MortarOffMap[mortarIndex];
+    g_MortarOffMap[mortarIndex] = false;
     
     // Check restricted zones and update blocked state
     bool wasBlocked = g_MortarBlocked[mortarIndex];
     g_MortarBlocked[mortarIndex] = IsTargetInRestrictedZone(groundPos, g_MortarBlockReason[mortarIndex], sizeof(g_MortarBlockReason[]));
     
-    // Refresh menu if blocked state changed
-    if (wasBlocked != g_MortarBlocked[mortarIndex])
+    // Refresh menu if blocked or off-map state changed
+    if (wasBlocked != g_MortarBlocked[mortarIndex] || wasOffMap != g_MortarOffMap[mortarIndex])
     {
         int owner = g_MortarOwner[mortarIndex];
         if (IsValidClient(owner) && IsPlayerAlive(owner))
@@ -1004,12 +1064,6 @@ void UpdateTargetSprite(int mortarIndex)
 
 void FireMortarEffects(const float pos[3], const float mortarAngles[3], int mortarIndex)
 {
-    // Increment shot counter
-    g_MortarShotsFired[mortarIndex]++;
-    
-    int maxShots = g_CvarMaxShots.IntValue;
-    bool lastShot = (maxShots > 0 && g_MortarShotsFired[mortarIndex] >= maxShots);
-    
     float explosionPos[3];
     explosionPos[0] = pos[0] + (float(g_MortarRange[mortarIndex]) * Cosine(DegToRad(mortarAngles[1])));
     explosionPos[1] = pos[1] + (float(g_MortarRange[mortarIndex]) * Sine(DegToRad(mortarAngles[1])));
@@ -1018,6 +1072,12 @@ void FireMortarEffects(const float pos[3], const float mortarAngles[3], int mort
     float groundExplosionPos[3];
     if (!FindGroundAt(explosionPos, pos, groundExplosionPos))
         return;
+    
+    // Increment shot counter only after confirmed valid target
+    g_MortarShotsFired[mortarIndex]++;
+    
+    int maxShots = g_CvarMaxShots.IntValue;
+    bool lastShot = (maxShots > 0 && g_MortarShotsFired[mortarIndex] >= maxShots);
     
     // Store for kill detection
     g_LastExplosionPos[mortarIndex][0] = groundExplosionPos[0];
@@ -1313,16 +1373,14 @@ bool TraceToGround(const float start[3], float result[3])
     end[1] = start[1];
     end[2] = start[2] - 10000.0;
     
-    Handle trace = TR_TraceRayFilterEx(start, end, MASK_SOLID_BRUSHONLY, RayType_EndPoint, TraceFilter_IgnorePlayers);
+    TR_TraceRayFilter(start, end, MASK_SOLID_BRUSHONLY, RayType_EndPoint, TraceFilter_IgnorePlayers);
     
-    if (TR_DidHit(trace))
+    if (TR_DidHit())
     {
-        TR_GetEndPosition(result, trace);
-        delete trace;
+        TR_GetEndPosition(result);
         return true;
     }
     
-    delete trace;
     return false;
 }
 
@@ -1340,25 +1398,23 @@ bool FindGroundAt(const float targetXY[3], const float mortarPos[3], float resul
     upEnd[1] = targetXY[1];
     upEnd[2] = mortarPos[2] + 10000.0;
     
-    Handle upTrace = TR_TraceRayFilterEx(upStart, upEnd, MASK_SOLID_BRUSHONLY, RayType_EndPoint, TraceFilter_IgnorePlayers);
+    TR_TraceRayFilter(upStart, upEnd, MASK_SOLID_BRUSHONLY, RayType_EndPoint, TraceFilter_IgnorePlayers);
     
     float downStart[3];
-    if (TR_DidHit(upTrace))
+    if (TR_DidHit())
     {
         float ceilingPos[3];
-        TR_GetEndPosition(ceilingPos, upTrace);
+        TR_GetEndPosition(ceilingPos);
         downStart[0] = targetXY[0];
         downStart[1] = targetXY[1];
-        downStart[2] = ceilingPos[2] - 16.0;  // just below ceiling
+        downStart[2] = ceilingPos[2] - 16.0;
     }
     else
     {
-        // No ceiling hit - use endpoint of upward trace as start
         downStart[0] = targetXY[0];
         downStart[1] = targetXY[1];
         downStart[2] = upEnd[2] - 16.0;
     }
-    delete upTrace;
     
     // Stage 2: trace down from just below ceiling
     return TraceToGround(downStart, result);
@@ -1371,11 +1427,9 @@ bool IsUnderRoof(const float mortarPos[3])
     upPos[1] = mortarPos[1];
     upPos[2] = mortarPos[2] + 200.0;
     
-    Handle trace = TR_TraceRayFilterEx(mortarPos, upPos, MASK_SOLID_BRUSHONLY, RayType_EndPoint, TraceFilter_IgnorePlayers);
+    TR_TraceRayFilter(mortarPos, upPos, MASK_SOLID_BRUSHONLY, RayType_EndPoint, TraceFilter_IgnorePlayers);
     
-    bool result = TR_DidHit(trace);
-    delete trace;
-    return result;
+    return TR_DidHit();
 }
 
 public bool TraceFilter_IgnorePlayers(int entity, int contentsMask, any data)
