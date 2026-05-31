@@ -5,7 +5,7 @@
 #pragma semicolon 1
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.9.7"
+#define PLUGIN_VERSION "0.9.8"
 
 // Model path
 #define MORTAR_MODEL "models/surgeon/mortar34.mdl"
@@ -1283,6 +1283,14 @@ bool IsTargetInRestrictedZone(const float targetPos[3], char[] reason, int maxle
         int ent = -1;
         while ((ent = FindEntityByClassname(ent, restrictedEntities[t])) != -1)
         {
+            // Skip dod_bomb_target entities that have already been destroyed (EF_NODRAW set)
+            if (StrEqual(restrictedEntities[t], "dod_bomb_target"))
+            {
+                int effects = GetEntProp(ent, Prop_Send, "m_fEffects");
+                if (effects & 32)
+                    continue;
+            }
+            
             float entPos[3];
             GetEntPropVector(ent, Prop_Send, "m_vecOrigin", entPos);
             
