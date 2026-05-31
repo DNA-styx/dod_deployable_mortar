@@ -5,7 +5,7 @@
 #pragma semicolon 1
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.9.6"
+#define PLUGIN_VERSION "0.9.7"
 
 // Model path
 #define MORTAR_MODEL "models/surgeon/mortar34.mdl"
@@ -838,6 +838,11 @@ public Action OnHelperDamage(int victim, int &attacker, int &inflictor, float &d
         GetEntPropVector(mortarEntity, Prop_Send, "m_angRotation", mortarAngles);
         
         FireMortarEffects(mortarPos, mortarAngles, mortarIndex);
+        
+        // Refresh menu to disable Fire Mortar during reload
+        if (IsValidClient(mortarOwner) && IsPlayerAlive(mortarOwner))
+            ShowMortarMenu(mortarOwner, mortarIndex, MENU_STATE_NORMAL);
+        
         return Plugin_Handled;
     }
     
@@ -1051,7 +1056,7 @@ void FireMortarEffects(const float pos[3], const float mortarAngles[3], int mort
         destroyPack.WriteFloat(pos[0]);
         destroyPack.WriteFloat(pos[1]);
         destroyPack.WriteFloat(pos[2]);
-        CreateTimer(5.1, Timer_DestroyAfterLastShot, destroyPack);
+        CreateTimer(2.1, Timer_DestroyAfterLastShot, destroyPack);
     }
 }
 
