@@ -5,7 +5,7 @@
 #pragma semicolon 1
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.9.12"
+#define PLUGIN_VERSION "0.9.13"
 
 // Model path
 #define MORTAR_MODEL "models/surgeon/mortar34.mdl"
@@ -980,6 +980,7 @@ void SpawnGib(const char[] model, const float pos[3], const char[] angles)
     TeleportEntity(gib, pos, NULL_VECTOR, NULL_VECTOR);
     DispatchSpawn(gib);
     ActivateEntity(gib);
+    CreateTimer(15.0, Timer_RemoveEntity, EntIndexToEntRef(gib));
 }
 
 // --- Firing Effects ---
