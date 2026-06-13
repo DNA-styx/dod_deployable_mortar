@@ -5,7 +5,7 @@
 #pragma semicolon 1
 #pragma newdecls required
 
-#define PLUGIN_VERSION "0.9.13"
+#define PLUGIN_VERSION "0.9.23"
 
 // Model path
 #define MORTAR_MODEL "models/surgeon/mortar34.mdl"
@@ -75,13 +75,20 @@ Handle g_ExplosionTimer[MAX_MORTARS];
 bool g_MortarBlocked[MAX_MORTARS];
 char g_MortarBlockReason[MAX_MORTARS][32];
 bool g_MortarOffMap[MAX_MORTARS];
+float g_MortarSkyZ[MAX_MORTARS];
+int g_MortarGroundMarker[MAX_MORTARS];
 
 ConVar g_CvarWelcome;
 ConVar g_CvarMaxShots;
+ConVar g_CvarDebugBeam;
 int g_SteamEntity[MAX_MORTARS];
+int g_BeamSprite = -1;
 
 // Track shots fired per mortar
 int g_MortarShotsFired[MAX_MORTARS];
+
+// Track which clients currently have the mortar menu open
+bool g_MortarMenuOpen[MAXPLAYERS + 1];
 
 public Plugin myinfo =
 {
@@ -97,6 +104,7 @@ public void OnPluginStart()
     CreateConVar("dod_deployable_mortar_version", PLUGIN_VERSION, "DoD Deployable Mortar Version", FCVAR_NOTIFY|FCVAR_DONTRECORD);
     g_CvarWelcome = CreateConVar("dod_deployable_mortar_welcome", "1", "Show welcome message to players on connect (0=off, 1=on)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
     g_CvarMaxShots = CreateConVar("dod_deployable_mortar_shots", "5", "Number of shots before mortar is destroyed (0=unlimited)", FCVAR_NOTIFY, true, 0.0);
+    g_CvarDebugBeam = CreateConVar("dod_deployable_mortar_debug", "0", "Draw targeting beam visible to admins (0=off, 1=on)", FCVAR_NOTIFY, true, 0.0, true, 1.0);
     
     AutoExecConfig(true, "dod_deployable_mortar");
     RegConsoleCmd("sm_mortar", Command_SpawnMortar, "Deploy a mortar");
@@ -127,6 +135,8 @@ public Action Listener_Say(int client, const char[] command, int argc)
 
 public void OnClientDisconnect(int client)
 {
+    g_MortarMenuOpen[client] = false;
+    
     // Clean up mortars owned by disconnecting player
     for (int i = 0; i < g_MortarCount; i++)
     {
@@ -250,14 +260,14 @@ public Action OnPlayerDeath(Handle event, const char[] name, bool dontBroadcast)
 
 public Action OnRoundStart(Handle event, const char[] name, bool dontBroadcast)
 {
-    CancelAllMenus();
+    CancelMortarMenus();
     RemoveAllMortars();
     return Plugin_Continue;
 }
 
 public Action OnRoundWin(Handle event, const char[] name, bool dontBroadcast)
 {
-    CancelAllMenus();
+    CancelMortarMenus();
     return Plugin_Continue;
 }
 
@@ -307,25 +317,28 @@ public Action OnPlayerSpawn(Handle event, const char[] name, bool dontBroadcast)
     return Plugin_Continue;
 }
 
-void CancelAllMenus()
+void CancelMortarMenus()
 {
-    for (int i = 1; i <= MaxClients; i++)
+    for (int i = 0; i < g_MortarCount; i++)
     {
-        if (IsClientInGame(i))
-            CancelClientMenu(i);
+        int owner = g_MortarOwner[i];
+        if (IsValidClient(owner, false, false) && g_MortarMenuOpen[owner])
+            CancelClientMenu(owner);
     }
 }
 
 public void OnMapEnd()
 {
-    CancelAllMenus();
+    CancelMortarMenus();
     RemoveAllMortars();
 }
 
 public void OnMapStart()
 {
-    CancelAllMenus();
     g_MortarCount = 0;
+    
+    for (int i = 1; i <= MaxClients; i++)
+        g_MortarMenuOpen[i] = false;
     
     PrecacheModel(MORTAR_MODEL, true);
     PrecacheModel(MORTAR_MODEL_AXIS, true);
@@ -334,10 +347,14 @@ public void OnMapStart()
     PrecacheModel("models/surgeon/mortar34_gib1.mdl", true);
     PrecacheModel("models/surgeon/mortar34_gib2.mdl", true);
     PrecacheModel("models/surgeon/mortar34_gib3.mdl", true);
+    PrecacheModel("models/weapons/w_smoke_us.mdl", true);
+    PrecacheModel("models/weapons/w_smoke_ger.mdl", true);
     
     PrecacheSound(SOUND_FIRING, true);
     PrecacheSound(SOUND_RELOAD, true);
     PrecacheSound(SOUND_INCOMING, true);
+    
+    g_BeamSprite = PrecacheModel("materials/sprites/laserbeam.vmt", true);
     
     // Custom mortar models - register all companion files for client download
     AddFileToDownloadsTable("models/surgeon/mortar34.mdl");
@@ -512,6 +529,7 @@ void ShowMortarMenu(int client, int mortarIndex, int state)
     
     menu.ExitButton = true;
     menu.Display(client, MENU_TIME_FOREVER);
+    g_MortarMenuOpen[client] = true;
 }
 
 public int MenuHandler_Mortar(Menu menu, MenuAction action, int param1, int param2)
@@ -591,6 +609,8 @@ public int MenuHandler_Mortar(Menu menu, MenuAction action, int param1, int para
                 g_MortarBlocked[newMortarIndex] = false;
                 g_MortarOffMap[newMortarIndex] = false;
                 g_MortarShotsFired[newMortarIndex] = 0;
+                g_MortarSkyZ[newMortarIndex] = StoreSkyZ(groundPos);
+                g_MortarGroundMarker[newMortarIndex] = INVALID_ENT_REFERENCE;
                 g_MortarCount++;
                 
                 UpdateTargetSprite(newMortarIndex);
@@ -646,6 +666,10 @@ public int MenuHandler_Mortar(Menu menu, MenuAction action, int param1, int para
         }
         
         ShowMortarMenu(client, mortarIndex, MENU_STATE_NORMAL);
+    }
+    else if (action == MenuAction_Cancel)
+    {
+        g_MortarMenuOpen[param1] = false;
     }
     else if (action == MenuAction_End)
     {
@@ -708,6 +732,12 @@ void RemoveMortar(int mortarIndex)
     g_MortarBlocked[mortarIndex] = false;
     g_MortarBlockReason[mortarIndex][0] = '\0';
     g_MortarOffMap[mortarIndex] = false;
+    g_MortarSkyZ[mortarIndex] = 0.0;
+    
+    int marker = EntRefToEntIndex(g_MortarGroundMarker[mortarIndex]);
+    if (marker != INVALID_ENT_REFERENCE && IsValidEntity(marker))
+        AcceptEntityInput(marker, "Kill");
+    g_MortarGroundMarker[mortarIndex] = INVALID_ENT_REFERENCE;
     g_MortarShotsFired[mortarIndex] = 0;
 }
 
@@ -837,7 +867,7 @@ int CreateHelperEntity(const float pos[3], int mortarEntity, int mortarIndex)
 
 public Action OnHelperDamage(int victim, int &attacker, int &inflictor, float &damage, int &damagetype)
 {
-    if (!IsValidClient(attacker))
+    if (!IsValidClient(attacker, false, true))
         return Plugin_Continue;
     
     // Get mortar entity from helper owner
@@ -983,6 +1013,56 @@ void SpawnGib(const char[] model, const float pos[3], const char[] angles)
     CreateTimer(15.0, Timer_RemoveEntity, EntIndexToEntRef(gib));
 }
 
+void DrawTargetBeam(int mortarIndex, const float fromPos[3], const float toPos[3])
+{
+    int owner = g_MortarOwner[mortarIndex];
+    
+    // Build list of clients to send beam to - admins only, fall back to owner
+    int[] targets = new int[MaxClients];
+    int count = 0;
+    bool adminFound = false;
+    
+    for (int i = 1; i <= MaxClients; i++)
+    {
+        if (!IsClientInGame(i) || IsFakeClient(i))
+            continue;
+        if (GetUserFlagBits(i) != 0)
+        {
+            targets[count++] = i;
+            adminFound = true;
+        }
+    }
+    
+    // No admins online - send to owner only
+    if (!adminFound && IsValidClient(owner))
+    {
+        targets[count++] = owner;
+    }
+    
+    if (count == 0)
+        return;
+    
+    int color[4] = {0, 255, 0, 200};
+    
+    TE_SetupBeamPoints(
+        fromPos,
+        toPos,
+        g_BeamSprite,
+        g_BeamSprite,
+        0,      // startframe
+        0,      // framerate
+        25.0,   // life (max allowed by engine)
+        4.0,    // width
+        4.0,    // endwidth
+        0,      // fade length
+        0.0,    // amplitude
+        color,
+        0       // flags
+    );
+    
+    TE_Send(targets, count);
+}
+
 // --- Firing Effects ---
 
 void UpdateTargetSprite(int mortarIndex)
@@ -1001,7 +1081,7 @@ void UpdateTargetSprite(int mortarIndex)
     targetPos[2] = mortarPos[2];
     
     float groundPos[3];
-    if (!FindGroundAt(targetPos, mortarPos, groundPos))
+    if (!FindGroundAt(targetPos, mortarPos, g_MortarSkyZ[mortarIndex], groundPos))
     {
         bool wasOffMap = g_MortarOffMap[mortarIndex];
         g_MortarOffMap[mortarIndex] = true;
@@ -1034,10 +1114,38 @@ void UpdateTargetSprite(int mortarIndex)
     if (oldSprite != INVALID_ENT_REFERENCE && IsValidEntity(oldSprite))
         AcceptEntityInput(oldSprite, "Kill");
     
+    int oldMarker = EntRefToEntIndex(g_MortarGroundMarker[mortarIndex]);
+    if (oldMarker != INVALID_ENT_REFERENCE && IsValidEntity(oldMarker))
+        AcceptEntityInput(oldMarker, "Kill");
+    
+    // Spawn smoke grenade model at ground level
+    int owner = g_MortarOwner[mortarIndex];
+    char smokeModel[64];
+    if (IsValidClient(owner) && GetClientTeam(owner) == TEAM_AXIS)
+        strcopy(smokeModel, sizeof(smokeModel), "models/weapons/w_smoke_ger.mdl");
+    else
+        strcopy(smokeModel, sizeof(smokeModel), "models/weapons/w_smoke_us.mdl");
+    
+    int marker = CreateEntityByName("prop_dynamic");
+    if (marker != -1)
+    {
+        float flatAngles[3] = {90.0, 0.0, 0.0};
+        DispatchKeyValue(marker, "model", smokeModel);
+        DispatchKeyValue(marker, "solid", "0");
+        TeleportEntity(marker, groundPos, flatAngles, NULL_VECTOR);
+        DispatchSpawn(marker);
+        ActivateEntity(marker);
+        g_MortarGroundMarker[mortarIndex] = EntIndexToEntRef(marker);
+    }
+    
+    // Spawn persistent smokestack 20 units above ground
     int smokestack = CreateEntityByName("env_smokestack");
     if (smokestack != -1)
     {
-        groundPos[2] += 10.0;
+        float smokePos[3];
+        smokePos[0] = groundPos[0];
+        smokePos[1] = groundPos[1];
+        smokePos[2] = groundPos[2] + 20.0;
         
         DispatchKeyValue(smokestack, "InitialState", "1");
         DispatchKeyValue(smokestack, "BaseSpread", "20");
@@ -1051,16 +1159,17 @@ void UpdateTargetSprite(int mortarIndex)
         DispatchKeyValue(smokestack, "RenderColor", "0 255 0");
         DispatchKeyValue(smokestack, "RenderAmt", "200");
         
-        TeleportEntity(smokestack, groundPos, NULL_VECTOR, NULL_VECTOR);
+        TeleportEntity(smokestack, smokePos, NULL_VECTOR, NULL_VECTOR);
         DispatchSpawn(smokestack);
         ActivateEntity(smokestack);
         AcceptEntityInput(smokestack, "TurnOn");
         
-        // Turn off after 0.5 seconds so smoke dissipates
-        CreateTimer(0.5, Timer_TurnOffSmokestack, EntIndexToEntRef(smokestack));
-        
         g_MortarTargetSprite[mortarIndex] = EntIndexToEntRef(smokestack);
     }
+    
+    // Draw debug targeting beam if enabled
+    if (g_CvarDebugBeam.BoolValue && g_BeamSprite != -1)
+        DrawTargetBeam(mortarIndex, mortarPos, groundPos);
 }
 
 void FireMortarEffects(const float pos[3], const float mortarAngles[3], int mortarIndex)
@@ -1071,7 +1180,7 @@ void FireMortarEffects(const float pos[3], const float mortarAngles[3], int mort
     explosionPos[2] = pos[2];
     
     float groundExplosionPos[3];
-    if (!FindGroundAt(explosionPos, pos, groundExplosionPos))
+    if (!FindGroundAt(explosionPos, pos, g_MortarSkyZ[mortarIndex], groundExplosionPos))
         return;
     
     // Increment shot counter only after confirmed valid target
@@ -1374,7 +1483,7 @@ bool TraceToGround(const float start[3], float result[3])
     end[1] = start[1];
     end[2] = start[2] - 10000.0;
     
-    TR_TraceRayFilter(start, end, MASK_SOLID_BRUSHONLY, RayType_EndPoint, TraceFilter_IgnorePlayers);
+    TR_TraceRayFilter(start, end, MASK_SOLID, RayType_EndPoint, TraceFilter_IgnorePlayers);
     
     if (TR_DidHit())
     {
@@ -1385,40 +1494,53 @@ bool TraceToGround(const float start[3], float result[3])
     return false;
 }
 
-// Two-stage trace: first trace up to find ceiling/sky height, then trace down from just below it
-bool FindGroundAt(const float targetXY[3], const float mortarPos[3], float result[3])
+float StoreSkyZ(const float mortarPos[3])
 {
-    // Stage 1: trace upward from mortar height at target XY to find ceiling
     float upStart[3];
-    upStart[0] = targetXY[0];
-    upStart[1] = targetXY[1];
-    upStart[2] = mortarPos[2];
+    upStart[0] = mortarPos[0];
+    upStart[1] = mortarPos[1];
+    upStart[2] = mortarPos[2] + 50.0;
     
     float upEnd[3];
-    upEnd[0] = targetXY[0];
-    upEnd[1] = targetXY[1];
+    upEnd[0] = mortarPos[0];
+    upEnd[1] = mortarPos[1];
     upEnd[2] = mortarPos[2] + 10000.0;
     
     TR_TraceRayFilter(upStart, upEnd, MASK_SOLID_BRUSHONLY, RayType_EndPoint, TraceFilter_IgnorePlayers);
     
-    float downStart[3];
     if (TR_DidHit())
     {
         float ceilingPos[3];
         TR_GetEndPosition(ceilingPos);
-        downStart[0] = targetXY[0];
-        downStart[1] = targetXY[1];
-        downStart[2] = ceilingPos[2] - 16.0;
-    }
-    else
-    {
-        downStart[0] = targetXY[0];
-        downStart[1] = targetXY[1];
-        downStart[2] = upEnd[2] - 16.0;
+        return ceilingPos[2] - 16.0;
     }
     
-    // Stage 2: trace down from just below ceiling
-    return TraceToGround(downStart, result);
+    return mortarPos[2] + 10000.0;
+}
+
+// Two-stage trace: use stored sky Z, then trace straight down at the target XY.
+bool FindGroundAt(const float targetXY[3], const float mortarPos[3], float skyZ, float result[3])
+{
+    // Stage 2: trace DOWN at the target XY from stored sky Z to well below the mortar.
+    float downStart[3];
+    downStart[0] = targetXY[0];
+    downStart[1] = targetXY[1];
+    downStart[2] = skyZ;
+    
+    float downEnd[3];
+    downEnd[0] = targetXY[0];
+    downEnd[1] = targetXY[1];
+    downEnd[2] = mortarPos[2] - 10000.0;
+    
+    TR_TraceRayFilter(downStart, downEnd, MASK_SOLID, RayType_EndPoint, TraceFilter_IgnorePlayers);
+    
+    if (TR_DidHit() && !TR_StartSolid())
+    {
+        TR_GetEndPosition(result);
+        return true;
+    }
+    
+    return false;
 }
 
 bool IsUnderRoof(const float mortarPos[3])
