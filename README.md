@@ -18,9 +18,9 @@
 - Menu-based controls to deploy, remove, fire, rotate, and adjust mortar range
 - Team-specific models - Allied and Axis players get different mortars
 - Range displayed in metres (20m - 200m, in 10m steps)
-- Green smoke marks where the shell will land before firing
-- Fire is restricted near objectives, bomb points, and spawn areas to prevent spawn killing
-- Fire is restricted when the target is off the map
+- Persistent green smoke and a smoke grenade model mark exactly where the shell will land
+- Fire is restricted near objectives, bomb points, spawn areas and off the map, and the menu shows which one is blocking
+- Bomb plant points stop being restricted once the bomb has already been detonated
 - Mortars have health and can be destroyed by enemy fire, spawning gibs on destruction
 - Mortar is destroyed after a configurable number of shots
 - Mortar persists when the owner dies but is removed if they change team or go to spectator
@@ -29,6 +29,7 @@
 - Welcome message on join letting players know the mortar is available
 - Chat notifications for kills with team colours
 - HLStatsX support for kills and mortar destructions
+- Optional admin-only debug beam to visualise where the plugin has detected the target ground
 
 ## Installation
 
@@ -49,7 +50,7 @@
   - Fire Mortar (shows remaining rounds)
   - Adjust Range (+/- 10m)
   - Rotate Left/Right
-- Green smoke appears briefly where the mortar shell will land.
+- Green smoke and a smoke grenade model mark the shell's landing spot and stay in place until the target is moved.
 - Fire the mortar by punching/shooting it, or from the menu.
 - Mortars can be destroyed by enemy players.
 - Once the shot limit is reached the mortar is automatically destroyed.
@@ -62,6 +63,7 @@ Saved to `cfg/sourcemod/dod_deployable_mortar.cfg` on first run.
 |------|---------|-------------|
 | `dod_deployable_mortar_welcome` | `1` | Show welcome message to players on connect (0=off, 1=on) |
 | `dod_deployable_mortar_shots` | `5` | Number of shots before mortar is destroyed (0=unlimited) |
+| `dod_deployable_mortar_debug` | `0` | Draw a targeting beam visible to admins showing the detected ground position (0=off, 1=on) |
 
 ## HLStatsX Support
 
